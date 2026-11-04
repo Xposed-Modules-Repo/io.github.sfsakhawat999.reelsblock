@@ -1,0 +1,46 @@
+name: Feature request
+description: Suggest an idea or a new app target for ReelsBlock
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ReelsBlock intentionally stays small: one short/reel per visit, headless,
+        always on. Please keep suggestions in that spirit.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of request is this?
+      options:
+        - Support for another app
+        - Better blocking behavior
+        - Documentation / tooling
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: app
+    attributes:
+      label: App (if adding support for a new target)
+      placeholder: "e.g. TikTok 40.0.0 — Android 16"
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the idea
+      description: What should happen, and why is it useful?
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Extra context
+      description: Screenshots, logs, or the pager/view hierarchy if you already investigated it.
+    validations:
+      required: false

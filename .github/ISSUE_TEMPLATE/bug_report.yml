@@ -1,0 +1,83 @@
+name: Bug report
+description: Report a problem with blocking, hooks, or the module itself
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! Version mismatches are the most common cause of
+        hook problems, so please fill in the version fields accurately.
+
+  - type: input
+    id: module-version
+    attributes:
+      label: ReelsBlock version
+      placeholder: "e.g. 0.3.1 (versionCode 4)"
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Device and Android version
+      placeholder: "e.g. OPPO A059P, Android 16"
+    validations:
+      required: true
+
+  - type: input
+    id: framework
+    attributes:
+      label: Framework and version
+      placeholder: "e.g. Vector 2.2, LSPosed 1.9.2"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: target-app
+    attributes:
+      label: Affected app
+      options:
+        - YouTube (Shorts)
+        - Instagram (Reels)
+        - Both
+        - Other (module itself)
+    validations:
+      required: true
+
+  - type: input
+    id: app-version
+    attributes:
+      label: Target app version
+      placeholder: "e.g. YouTube 21.42.243 / Instagram 453.0.0.57.79"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Expected vs. actual behavior, plus steps to reproduce.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Output of `adb logcat -s ReelsBlock` around the issue.
+        Framework logs from `/data/adb/lspd/log/` are helpful when relevant.
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I am on a rooted device with an LSPosed-compatible framework (modern libxposed API)
+          required: true
+        - label: I force-stopped (or rebooted) the target app after enabling the module
+          required: true

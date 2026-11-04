@@ -1,0 +1,108 @@
+name: Release Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version/tag (leave empty to use the Gradle versionName, prefixed with v)"
+        required: false
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-sign-draft:
+    name: Build, sign and draft release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 21
+          cache: 'gradle'
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          INPUT_VERSION="${{ inputs.version }}"
+          if [ -n "$INPUT_VERSION" ]; then
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION=$(grep -m1 'versionName =' app/build.gradle.kts \
+              | sed -E 's/.*versionName = "([^"]+)".*/\1/')
+          fi
+          case "$VERSION" in
+            v*) TAG="$VERSION" ;;
+            *)  TAG="v$VERSION" ;;
+          esac
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "Resolved version: $VERSION (tag: $TAG)"
+
+      - name: Build release APK
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Sign APK
+        run: |
+          set -euo pipefail
+          RELEASE_DIR="app/build/outputs/apk/release"
+
+          UNSIGNED=$(find "$RELEASE_DIR" -name "*-release-unsigned.apk" -type f | head -n 1)
+          if [ -z "$UNSIGNED" ]; then
+            echo "No unsigned release APK found"
+            ls -lah "$RELEASE_DIR" || true
+            exit 1
+          fi
+
+          umask 077
+          echo "${{ secrets.SIGNING_KEYSTORE }}" | base64 -d > release.keystore
+
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
+          echo "Using apksigner: $APKSIGNER"
+
+          SIGNED="$RELEASE_DIR/ReelsBlock-${{ env.VERSION }}.apk"
+          $APKSIGNER sign \
+            --ks release.keystore \
+            --ks-key-alias "${{ secrets.SIGNING_KEY_ALIAS }}" \
+            --ks-pass "pass:${{ secrets.SIGNING_STORE_PASSWORD }}" \
+            --key-pass "pass:${{ secrets.KEY_PASSWORD }}" \
+            --out "$SIGNED" \
+            "$UNSIGNED"
+
+          rm -f "$UNSIGNED" release.keystore
+          $APKSIGNER verify "$SIGNED"
+          ls -lh "$RELEASE_DIR"
+
+      - name: Upload signed APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReelsBlock-${{ env.VERSION }}-signed
+          path: app/build/outputs/apk/release/ReelsBlock-${{ env.VERSION }}.apk
+          if-no-files-found: error
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: ReelsBlock ${{ env.VERSION }}
+          draft: true
+          generate_release_notes: true
+          files: app/build/outputs/apk/release/ReelsBlock-${{ env.VERSION }}.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

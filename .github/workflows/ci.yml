@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 21
+          cache: 'gradle'
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Sanity check module packaging
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK" || { echo "APK not found"; exit 1; }
+
+          echo "== Module metadata"
+          unzip -l "$APK" | grep "META-INF/xposed/" || {
+            echo "ERROR: META-INF/xposed metadata missing"
+            exit 1
+          }
+
+          DEXDUMP=$(find "$ANDROID_HOME/build-tools" -name dexdump | sort -V | tail -n 1)
+          echo "Using dexdump: $DEXDUMP"
+          if "$DEXDUMP" "$APK" | grep -q "Class descriptor.*Lde/robv"; then
+            echo "ERROR: Xposed API classes are bundled in the APK"
+            exit 1
+          fi
+          echo "OK: no de.robv class definitions bundled"
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReelsBlock-debug-${{ github.sha }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
