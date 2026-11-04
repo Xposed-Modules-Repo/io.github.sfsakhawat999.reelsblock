@@ -2,6 +2,10 @@
 
 **One Short. One Reel. Then the pager freezes.**
 
+**Download:** [latest APK](https://github.com/Xposed-Modules-Repo/io.github.sfsakhawat999.reelsblock/releases)
+· **Module page:** [modules.lsposed.org](https://modules.lsposed.org/module/io.github.sfsakhawat999.reelsblock)
+· **Package:** `io.github.sfsakhawat999.reelsblock`
+
 ReelsBlock is an Xposed module for rooted Android devices that stops doom-scrolling
 in YouTube Shorts, YouTube Music Samples, Instagram Reels and Facebook Reels: you
 get to watch *exactly one* short/sample/reel per visit — the one that opens — and
@@ -123,7 +127,8 @@ libxposed API artifact.
 
 ## Installation
 
-1. Build (or grab a release APK) and install it on the rooted device.
+1. Download the latest APK from [Releases](https://github.com/Xposed-Modules-Repo/io.github.sfsakhawat999.reelsblock/releases)
+   (or build it yourself — see [Building](#building)) and install it on the rooted device.
 2. Open your Xposed manager → Modules → enable **ReelsBlock**.
 3. Scope is fixed by the module itself — YouTube, YouTube Music, Instagram,
    Facebook and the Chromium browsers are added automatically.
@@ -159,8 +164,9 @@ are not supported. Full details and limitations: [docs/browser.md](docs/browser.
   su -c "ls /data/adb/lspd/log/"
   ```
 - If a target app update breaks blocking, the module logs `(version drift)` for the
-  anchor it could not resolve. Please open an issue with your app version and the
-  log lines.
+  anchor it could not resolve. Please open an
+  [issue](https://github.com/Xposed-Modules-Repo/io.github.sfsakhawat999.reelsblock/issues)
+  with your app version and the log lines.
 - Browser not blocked after a module update? Open the module's scope page in
   Vector and apply **Use what the module asks for** — a browser added in a newer
   version can show up unticked even though the list says "Fixed by the module".

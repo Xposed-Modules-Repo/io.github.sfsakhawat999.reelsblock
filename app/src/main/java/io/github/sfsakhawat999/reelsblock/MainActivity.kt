@@ -114,7 +114,7 @@ class MainActivity : Activity() {
 
         content.addView(githubButton())
         content.addView(
-            caption("github.com/sfsakhawat999/ReelsBlock", dip(10)).apply {
+            caption("github.com/Xposed-Modules-Repo/io.github.sfsakhawat999.reelsblock", dip(10)).apply {
                 gravity = Gravity.CENTER_HORIZONTAL
             },
         )
@@ -377,13 +377,14 @@ class MainActivity : Activity() {
             packageManager.getPackageInfo(packageName, 0)
         }
         info.versionName
-    }.getOrNull() ?: "0.3.1"
+    }.getOrNull() ?: "1.0.0"
 
     private fun dip(dp: Int): Int =
         (dp * resources.displayMetrics.density + 0.5f).toInt()
 
     private companion object {
         const val ACCENT = 0xFFEF4444.toInt()
-        const val REPO_URL = "https://github.com/sfsakhawat999/ReelsBlock"
+        const val REPO_URL =
+            "https://github.com/Xposed-Modules-Repo/io.github.sfsakhawat999.reelsblock"
     }
 }
