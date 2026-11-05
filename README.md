@@ -1,38 +1,40 @@
 # ReelsBlock
 
-**One Short. One Reel. Then the pager freezes.**
+**Stop the endless scroll.**
 
 **Download:** [latest APK](https://github.com/Xposed-Modules-Repo/io.github.sfsakhawat999.reelsblock/releases)
 · **Module page:** [modules.lsposed.org](https://modules.lsposed.org/module/io.github.sfsakhawat999.reelsblock)
 · **Package:** `io.github.sfsakhawat999.reelsblock`
 
-ReelsBlock is an Xposed module for rooted Android devices that stops doom-scrolling
-in YouTube Shorts, YouTube Music Samples, Instagram Reels and Facebook Reels: you
-get to watch *exactly one* short/sample/reel per visit — the one that opens — and
-every attempt to swipe to the next one is refused until you leave the player.
+ReelsBlock is an Xposed module for rooted Android devices that stops endless
+vertical scrolling in short videos: YouTube Shorts, YouTube Music Samples,
+Instagram Reels and Facebook Reels. The video you open plays normally, so a
+specific Short or Reel opened from search, your feed or a profile still works.
+Taps, likes, comments and playback keep working — but swiping to the next video
+does nothing until you leave the player.
 
 YouTube search, the home feed, long videos, comments, likes — all untouched.
-This module only disarms the vertical pager of the Shorts/Samples/Reels player.
+ReelsBlock only affects the short-video player.
 
 ---
 
 ## Features
 
-- **YouTube Shorts** — the first Short opens normally; the vertical swipe pager is
-  frozen until you exit Shorts.
-- **YouTube Music Samples** — the same rule for the Samples tab.
-- **Instagram Reels** — same rule for the Reels player.
-- **Facebook Reels** — same rule for the Reels tab and for reels/videos opened
-  from the feed. Facebook's build renames the AndroidX paging methods, so the
-  pager is identified by shape instead of name; see
+- **YouTube Shorts** — Shorts play normally; swiping up for the next Short does
+  nothing until you leave the player.
+- **YouTube Music Samples** — the same for the Samples tab.
+- **Instagram Reels** — the same for the Reels player.
+- **Facebook Reels** — the same for the Reels tab and for reels/videos opened
+  from the feed. Facebook renames its internal classes every build, so the module
+  finds the player by its layout instead of a name; see
   [docs/facebook-reels.md](docs/facebook-reels.md).
 - **Browser (Chromium)** — Shorts/Reel URLs are blocked inside Chromium-based
   browsers (Chrome, Brave, Edge, Vivaldi, Kiwi, Ecosia, Cromite, …): the module
   hooks Chromium's tab URL callback and overwrites the page with a plain
   blocked page — YouTube Shorts included, no redirect.
   Details: [docs/browser.md](docs/browser.md).
-- **Taps still work** — like, comment, pause, and share keep functioning; only the
-  paging machinery (swipe / fling / programmatic page change) is blocked.
+- **Taps still work** — like, comment, pause, and share keep functioning; only
+  swiping to the next video is blocked.
 - **One gentle toast per visit** — "That's your Short, Sample or Reel for now.
   Press back to leave."
 - **Headless by design** — no launcher icon, no settings screen, no toggles.
@@ -179,19 +181,19 @@ are not supported. Full details and limitations: [docs/browser.md](docs/browser.
 - **Facebook:** verified on 538.0.0.53.70, 585.0.0.47.54 and 587.0.0.0.29 on
   phones; both the Reels tab and feed-opened reels are blocked. Support is
   device-dependent: on tablets, foldables, landscape or other layouts where
-  Facebook does not use this vertical pager, blocking may not apply. A future
+  Facebook does not use this kind of player, blocking may not apply. A future
   Facebook layout change may also need a re-probe.
 - **YouTube Music Samples:** verified on 9.41.53. The Samples tab uses the same
-  `ReelRecyclerView` pager as YouTube Shorts; if YouTube Music switches to a
-  different player, a re-probe is needed.
-- **Browser (Chromium):** a hard URL block, not the one-per-visit rule — a web
-  page has no pager we can freeze. Only reel URLs are caught; reels opened as
+  player component as YouTube Shorts; if YouTube Music switches to a different
+  player, a re-probe is needed.
+- **Browser (Chromium):** a hard URL block, not the in-app swipe block — a web
+  page has no in-app player to block. Only reel URLs are caught; reels opened as
   SPA modals while the URL stays on the feed are not. Browser updates may break
   the Chromium anchors until the module is updated; forks that strip or rename
   the engine classes log `(version drift)` and simply leave URLs alone. See
   [docs/browser.md](docs/browser.md).
-- Only the vertical short/sample/reel pager is blocked — by design. Normal
-  scrolling everywhere else stays untouched.
+- Only swiping inside the short-video player is blocked — by design. Scrolling
+  everywhere else stays untouched.
 - This is a personal, educational project. Using Xposed modules may violate the
   terms of service of the target apps; use at your own risk.
 
