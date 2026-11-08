@@ -377,7 +377,7 @@ class MainActivity : Activity() {
             packageManager.getPackageInfo(packageName, 0)
         }
         info.versionName
-    }.getOrNull() ?: "1.0.0"
+    }.getOrNull() ?: "1.0.1"
 
     private fun dip(dp: Int): Int =
         (dp * resources.displayMetrics.density + 0.5f).toInt()
