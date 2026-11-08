@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import android.webkit.WebView
 import android.widget.Toast
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
@@ -61,6 +62,13 @@ import java.util.LinkedHashSet
  *    ChromeXt, JingMatrix, GPL-3.0). YouTube Shorts are treated exactly
  *    like reels: a hard block, no redirect.
  *
+ *  1DM / 1DM+ (idm.internet.download.manager[.plus]) — WebView browser:
+ *    both bundle Lightning Browser, whose WebViewClient
+ *    (acr.browser.lightning.view.LightningWebClient) reports every
+ *    main-frame navigation. A blocked URL gets a full-screen overlay
+ *    painted into the current document (CSP/Trusted-Types safe), and a
+ *    2 s getUrl() poller catches History-API changes.
+ *
  * Enforcement (interceptor style — blocked = do not chain.proceed()):
  *   - Session = player attached → armed; detached → disarmed.
  *   - While armed, for the tracked pager (and its inner RecyclerView):
@@ -112,6 +120,10 @@ internal object Engine {
     const val INSTAGRAM_PACKAGE = "com.instagram.android"
     const val FACEBOOK_PACKAGE = "com.facebook.katana"
 
+    /** 1DM (free) and 1DM+ — both ship the Lightning Browser WebView engine. */
+    const val IDM_PACKAGE = "idm.internet.download.manager"
+    const val IDM_PLUS_PACKAGE = "idm.internet.download.manager.plus"
+
     /**
      * Chromium-based browsers that keep the engine Java layer the browser
      * hooks target. Heavily modified forks (Opera, Samsung Internet, Yandex,
@@ -134,9 +146,18 @@ internal object Engine {
         "org.bromite.bromite",
     )
 
+    /**
+     * WebView-based browsers with a different hook surface than Chromium.
+     * 1DM and 1DM+ bundle Lightning Browser
+     * (acr.browser.lightning.view.LightningWebClient), which installs an
+     * ordinary android.webkit.WebViewClient, so the module watches
+     * WebViewClient navigations instead of Chromium's tab delegate.
+     */
+    val WEBVIEW_BROWSER_PACKAGES = setOf(IDM_PACKAGE, IDM_PLUS_PACKAGE)
+
     // -------- target model --------
 
-    enum class TargetType { YOUTUBE, YOUTUBE_MUSIC, INSTAGRAM, FACEBOOK, BROWSER }
+    enum class TargetType { YOUTUBE, YOUTUBE_MUSIC, INSTAGRAM, FACEBOOK, BROWSER, WEBVIEW_BROWSER }
 
     class Target(
         val type: TargetType,
@@ -155,6 +176,7 @@ internal object Engine {
             "That's your Reel for now. Press back to leave.")
         // The blocked page itself is the feedback; no toast for the browser.
         in CHROMIUM_PACKAGES -> Target(TargetType.BROWSER, packageName, "")
+        in WEBVIEW_BROWSER_PACKAGES -> Target(TargetType.WEBVIEW_BROWSER, packageName, "")
         else -> null
     }
 
@@ -253,6 +275,9 @@ internal object Engine {
                 .onFailure { log("ReelsBlock: facebook hooks failed: $it") }
             TargetType.BROWSER -> runCatching { installBrowserHooks(classLoader, target) }
                 .onFailure { log("ReelsBlock: browser hooks failed: $it") }
+            TargetType.WEBVIEW_BROWSER ->
+                runCatching { installWebViewBrowserHooks(classLoader, target) }
+                    .onFailure { log("ReelsBlock: WebView browser hooks failed: $it") }
         }
     }
 
@@ -1132,13 +1157,189 @@ internal object Engine {
             )
     }
 
+    private fun browserUrlBlocked(url: String): Boolean =
+        BROWSER_SHORTS_RE.containsMatchIn(url) || BROWSER_REEL_RE.containsMatchIn(url)
+
     /** URL (a self-contained data: page) to navigate to, or null to leave it alone. */
     private fun browserBlockScriptFor(url: String): String? {
-        val page: String
-        if (BROWSER_SHORTS_RE.containsMatchIn(url)) page = browserBlockPageFor(url, browserBackSteps)
-        else if (BROWSER_REEL_RE.containsMatchIn(url)) page = browserBlockPageFor(url, browserBackSteps)
-        else return null
-        return "data:text/html;charset=utf-8," + Uri.encode(page)
+        if (!browserUrlBlocked(url)) return null
+        return "data:text/html;charset=utf-8," +
+            Uri.encode(browserBlockPageFor(url, browserBackSteps))
+    }
+
+    // =====================================================================
+    // 1DM / 1DM+ — Lightning Browser WebView
+    //
+    // Lightning ships an ordinary android.webkit.WebViewClient
+    // (acr.browser.lightning.view.LightningWebClient), so Chromium's tab
+    // classes do not exist here. Every main-frame navigation reaches
+    // onPageStarted / doUpdateVisitedHistory / onPageFinished; SPA
+    // pushState changes that skip those callbacks are caught by a light
+    // getUrl() poller, same idea as the Chromium path.
+    //
+    // Delivery differs from Chromium: instead of navigating to a data:
+    // page (which would show a huge data: URL in Lightning's address bar
+    // and corrupt its back history), paint a full-screen overlay into the
+    // current document with evaluateJavascript. The overlay is built with
+    // createElement/textContent, so Trusted Types does not block it, and
+    // the Back button leaves the Short through normal history.
+    // =====================================================================
+
+    private const val LIGHTNING_WEB_CLIENT =
+        "acr.browser.lightning.view.LightningWebClient"
+
+    @Volatile private var webViewHooked = false
+    private val liveWebViews = ArrayList<WeakReference<Any>>()
+    private val lastWebViewInjectMs = HashMap<Int, Long>()
+    private val lastWebViewInjectUrl = HashMap<Int, String?>()
+    @Volatile private var webViewPollerStarted = false
+
+    private fun installWebViewBrowserHooks(classLoader: ClassLoader, target: Target) {
+        val clientClass = runCatching {
+            Class.forName(LIGHTNING_WEB_CLIENT, false, classLoader)
+        }.onFailure {
+            log("ReelsBlock: 1DM WebViewClient not found (version drift): ${it.message}")
+        }.getOrNull() ?: return
+
+        if (webViewHooked) return
+
+        var installed = 0
+        for (m in clientClass.declaredMethods) {
+            if (m.isBridge || m.isSynthetic) continue
+            val isPageEvent = when (m.name) {
+                "onPageStarted", "onPageFinished", "doUpdateVisitedHistory" ->
+                    m.parameterCount >= 2
+                else -> false
+            }
+            if (!isPageEvent) continue
+            hookMethod(m, GateInterceptor(::webViewPageEvent))
+            installed++
+        }
+        if (installed == 0) {
+            log("ReelsBlock: 1DM navigation callbacks not found (version drift)")
+            return
+        }
+
+        startWebViewPoller()
+        webViewHooked = true
+        log("ReelsBlock: 1DM/1DM+ reel URLs are being blocked")
+    }
+
+    /** WebViewClient callbacks: (WebView, String, …) with the URL at index 1. */
+    private fun webViewPageEvent(chain: XposedInterface.Chain): Any? {
+        val result = chain.proceed()
+        try {
+            val view = chain.getArg(0) as? WebView ?: return result
+            // Track every WebView, not only blocked ones: the poller needs
+            // the instance to catch a later SPA pushState navigation.
+            rememberWebView(view)
+            val url = chain.getArg(1) as? String
+            if (!url.isNullOrEmpty() && browserUrlBlocked(url)) {
+                webViewInject(view, url)
+            }
+        } catch (t: Throwable) {
+            log("ReelsBlock: 1DM url check failed: $t")
+        }
+        return result
+    }
+
+    /** Tracks a live WebView for the poller (UI thread only). */
+    private fun rememberWebView(view: WebView) {
+        for (ref in liveWebViews) if (ref.get() === view) return
+        liveWebViews.add(WeakReference(view))
+    }
+
+    /** Paints the blocked overlay on [view] for [url], throttled. */
+    private fun webViewInject(view: WebView, url: String) {
+        val js = webViewBlockJsFor(url) ?: return
+        val now = SystemClock.uptimeMillis()
+        val key = System.identityHashCode(view)
+        val last = lastWebViewInjectMs[key] ?: 0L
+        if (now - last < 2500) return
+        if (lastWebViewInjectUrl[key] == url && now - last < 5000) return
+        lastWebViewInjectMs[key] = now
+        lastWebViewInjectUrl[key] = url
+        mainHandler.post {
+            runCatching { view.evaluateJavascript(js, null) }
+                .onFailure { log("ReelsBlock: 1DM block failed: $it") }
+        }
+    }
+
+    /** Re-checks every known WebView on the main thread (SPA url changes). */
+    private fun startWebViewPoller() {
+        if (webViewPollerStarted) return
+        webViewPollerStarted = true
+        val poll = object : Runnable {
+            override fun run() {
+                try {
+                    val iter = liveWebViews.iterator()
+                    while (iter.hasNext()) {
+                        val view = iter.next().get() as? WebView
+                        if (view == null) {
+                            iter.remove()
+                            continue
+                        }
+                        val url = runCatching { view.url }.getOrNull()
+                        if (!url.isNullOrEmpty() && browserUrlBlocked(url)) {
+                            webViewInject(view, url)
+                        }
+                    }
+                } catch (t: Throwable) {
+                    log("ReelsBlock: 1DM poll failed: $t")
+                }
+                mainHandler.postDelayed(this, 2000)
+            }
+        }
+        mainHandler.postDelayed(poll, 3000)
+    }
+
+    /**
+     * Self-contained overlay for a WebView page. Repeated calls are
+     * harmless: the marker id makes the script a no-op once installed.
+     */
+    private fun webViewBlockJsFor(url: String): String? {
+        if (!browserUrlBlocked(url)) return null
+        val isShorts = BROWSER_SHORTS_RE.containsMatchIn(url)
+        val host = runCatching {
+            java.net.URI(url).host?.removePrefix("www.") ?: ""
+        }.getOrDefault("")
+        val root = if (host.isNotEmpty()) "https://$host/" else "about:blank"
+        val title = if (isShorts) "Shorts are blocked here" else "Reels are blocked here"
+        val sub = if (host.isNotEmpty()) "ReelsBlock \u00b7 $host" else "ReelsBlock"
+        return """
+            (function(){
+              try{
+                var media=document.querySelectorAll('video,audio');
+                for(var i=0;i<media.length;i++){
+                  try{media[i].pause();media[i].muted=true;}catch(e){}
+                }
+              }catch(e){}
+              var id='reelsblock-block';
+              if(document.getElementById(id)) return;
+              var dark=!!(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);
+              var bg=dark?'#101418':'#f8f9fa';
+              var fg=dark?'#e8eaed':'#1a1c1e';
+              var subc=dark?'#9aa0a6':'#5f6368';
+              var o=document.createElement('div');
+              o.id=id;
+              o.style.cssText='position:fixed;inset:0;z-index:2147483647;background:'+bg+';color:'+fg+';display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;font-family:system-ui,Roboto,sans-serif;text-align:center;padding:24px;overflow:hidden';
+              var t=document.createElement('div');
+              t.textContent='$title';
+              t.style.cssText='font-size:20px;font-weight:600';
+              var s=document.createElement('div');
+              s.textContent='$sub';
+              s.style.cssText='font-size:13px;color:'+subc;
+              var b=document.createElement('button');
+              b.textContent='Back';
+              b.style.cssText='margin-top:14px;padding:10px 22px;border:0;border-radius:999px;background:#1f6feb;color:#fff;font-size:14px';
+              b.onclick=function(){
+                var x=document.getElementById(id); if(x) x.remove();
+                if(history.length>1){history.back();}else{location.href='$root';}
+              };
+              o.appendChild(t);o.appendChild(s);o.appendChild(b);
+              (document.documentElement||document.body).appendChild(o);
+            })();
+        """.trimIndent()
     }
 
     // -------- hook helpers --------

@@ -28,10 +28,11 @@ ReelsBlock only affects the short-video player.
   from the feed. Facebook renames its internal classes every build, so the module
   finds the player by its layout instead of a name; see
   [docs/facebook-reels.md](docs/facebook-reels.md).
-- **Browser (Chromium)** — Shorts/Reel URLs are blocked inside Chromium-based
-  browsers (Chrome, Brave, Edge, Vivaldi, Kiwi, Ecosia, Cromite, …): the module
-  hooks Chromium's tab URL callback and overwrites the page with a plain
-  blocked page — YouTube Shorts included, no redirect.
+- **Browsers (Chromium + 1DM)** — Shorts/Reel URLs are blocked inside
+  Chromium-based browsers (Chrome, Brave, Edge, Vivaldi, Kiwi, Ecosia,
+  Cromite, …) and inside the **1DM / 1DM+** built-in browser (Lightning
+  WebView engine): the module overwrites the page with a plain blocked page —
+  YouTube Shorts included, no redirect.
   Details: [docs/browser.md](docs/browser.md).
 - **Taps still work** — like, comment, pause, and share keep functioning; only
   swiping to the next video is blocked.
@@ -42,10 +43,12 @@ ReelsBlock only affects the short-video player.
   Xposed manager.
 - **Fixed scope** — declares `com.google.android.youtube`,
   `com.google.android.apps.youtube.music`, `com.instagram.android`,
-  `com.facebook.katana` and the Chromium browser packages (Chrome
+  `com.facebook.katana`, the Chromium browser packages (Chrome
   stable/beta/dev/canary, Brave, Edge, Vivaldi, Kiwi, Ecosia, Chromium,
-  Cromite, Bromite) as a static scope, so managers list them automatically
-  ("Fixed by the module" in Vector). No manual scope selection.
+  Cromite, Bromite) and `idm.internet.download.manager` /
+  `idm.internet.download.manager.plus` as a static scope, so managers list
+  them automatically ("Fixed by the module" in Vector). No manual scope
+  selection.
 
 ## Requirements
 
@@ -59,6 +62,7 @@ ReelsBlock only affects the short-video player.
   - Instagram **453.0.0.57.79**
   - Facebook **538.0.0.53.70**, **585.0.0.47.54**, **587.0.0.0.29**
     (Reels tab and feed-opened reels)
+  - 1DM+ **20.0** (browser; 1DM uses the same Lightning WebView engine)
 
 ## How it works
 
@@ -67,7 +71,7 @@ ReelsBlock is a *modern* libxposed module (no legacy `de.robv` classes are bundl
 | File | Purpose |
 |---|---|
 | `app/src/main/resources/META-INF/xposed/module.prop` | `minApiVersion=101`, `targetApiVersion=101`, `staticScope=true` |
-| `app/src/main/resources/META-INF/xposed/scope.list` | `com.google.android.youtube`, `com.google.android.apps.youtube.music`, `com.instagram.android`, `com.facebook.katana` |
+| `app/src/main/resources/META-INF/xposed/scope.list` | the four apps, the Chromium browsers and 1DM / 1DM+ |
 | `app/src/main/resources/META-INF/xposed/java_init.list` | Entry class `io.github.sfsakhawat999.reelsblock.xposed.ReelsBlockHook` |
 
 ### Session model
@@ -133,27 +137,35 @@ libxposed API artifact.
    (or build it yourself — see [Building](#building)) and install it on the rooted device.
 2. Open your Xposed manager → Modules → enable **ReelsBlock**.
 3. Scope is fixed by the module itself — YouTube, YouTube Music, Instagram,
-   Facebook and the Chromium browsers are added automatically.
+   Facebook, the Chromium browsers and 1DM / 1DM+ are added automatically.
 4. Force-stop YouTube, YouTube Music, Instagram, Facebook and the browser (or
    reboot) so the hook is injected into a fresh process.
 
 ## Browser support
 
-Built in — no extra module. Chromium-based browsers are all in the fixed scope:
-Chrome (stable/beta/dev/canary), Brave, Edge, Vivaldi, Kiwi, Ecosia, Chromium,
-Cromite and Bromite. Enable ReelsBlock for your browser in your Xposed manager
-(already listed) and force-stop it. In the browser, Shorts/Reel URLs —
-`youtube.com/shorts/…` (incl. `/shorts/feed`), `instagram.com/reels…`,
-`instagram.com/reel/<id>`, `facebook.com/reel…` — are navigated away into a
-plain "Shorts / Reels are blocked here" page with a Back button. No redirect
-for YouTube: a Short in the browser is treated exactly like a reel. Works for
-fresh visits and for SPA openers from a site's homepage.
+Built in — no extra module. The fixed scope includes:
 
-The injection mechanism is adapted from [ChromeXt](https://github.com/JingMatrix/ChromeXt)
-(JingMatrix, GPL-3.0). Verified on Chrome, Chrome Canary, Brave, Edge, Vivaldi,
-Kiwi, Ecosia, Cromite, ChromiumBrowser and Bromite. Heavy forks (Opera,
-Samsung Internet, Yandex, Aloha) rename the engine classes the hook needs and
-are not supported. Full details and limitations: [docs/browser.md](docs/browser.md).
+- **Chromium-based browsers:** Chrome (stable/beta/dev/canary), Brave, Edge,
+  Vivaldi, Kiwi, Ecosia, Chromium, Cromite and Bromite.
+- **1DM and 1DM+:** the download manager's built-in browser, which uses the
+  Lightning WebView engine.
+
+Enable ReelsBlock for your browser in your Xposed manager (already listed) and
+force-stop it. In the browser, Shorts/Reel URLs — `youtube.com/shorts/…`
+(incl. `/shorts/feed`), `instagram.com/reels…`, `instagram.com/reel/<id>`,
+`facebook.com/reel…` — are replaced with a plain "Shorts / Reels are blocked
+here" page with a Back button. No redirect for YouTube: a Short in the browser
+is treated exactly like a reel. Works for fresh visits and for SPA openers from
+a site's homepage.
+
+The Chromium path hooks the tab URL callback (mechanism adapted from
+[ChromeXt](https://github.com/JingMatrix/ChromeXt), JingMatrix, GPL-3.0) and is
+verified on Chrome, Chrome Canary, Brave, Edge, Vivaldi, Kiwi, Ecosia, Cromite,
+ChromiumBrowser and Bromite. The 1DM path hooks Lightning's `WebViewClient` and
+paints the blocked page into the current document; verified on 1DM+ 20.0.
+Heavy Chromium forks (Opera, Samsung Internet, Yandex, Aloha) rename the engine
+classes the hook needs and are not supported. Full details and limitations:
+[docs/browser.md](docs/browser.md).
 
 ## Troubleshooting
 
@@ -186,11 +198,12 @@ are not supported. Full details and limitations: [docs/browser.md](docs/browser.
 - **YouTube Music Samples:** verified on 9.41.53. The Samples tab uses the same
   player component as YouTube Shorts; if YouTube Music switches to a different
   player, a re-probe is needed.
-- **Browser (Chromium):** a hard URL block, not the in-app swipe block — a web
-  page has no in-app player to block. Only reel URLs are caught; reels opened as
-  SPA modals while the URL stays on the feed are not. Browser updates may break
-  the Chromium anchors until the module is updated; forks that strip or rename
-  the engine classes log `(version drift)` and simply leave URLs alone. See
+- **Browsers (Chromium + 1DM):** a hard URL block, not the in-app swipe block —
+  a web page has no in-app player to block. Only reel URLs are caught; reels
+  opened as SPA modals while the URL stays on the feed are not. Browser updates
+  may break the anchors until the module is updated; forks that strip or rename
+  the engine classes log `(version drift)` and simply leave URLs alone. The 1DM
+  overlay relies on JavaScript being enabled in its browser. See
   [docs/browser.md](docs/browser.md).
 - Only swiping inside the short-video player is blocked — by design. Scrolling
   everywhere else stays untouched.

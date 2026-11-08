@@ -96,6 +96,13 @@ class MainActivity : Activity() {
                         "Chrome, Brave, Edge, Vivaldi, Kiwi, Ecosia, Cromite, …",
                     ),
                 )
+                addView(divider())
+                addView(
+                    appRow(
+                        "1DM / 1DM+ browser",
+                        "Lightning WebView engine (1DM+ 20.0)",
+                    ),
+                )
             },
         )
 

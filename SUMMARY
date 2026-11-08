@@ -1,3 +1,3 @@
-ReelsBlock lets you watch exactly one Short, Sample or Reel per visit, then refuses to page to the next one until you leave — in YouTube, YouTube Music, Instagram and Facebook. It also hard-blocks Shorts and Reels URLs inside Chromium-based browsers with a plain, theme-aware blocked page.
+ReelsBlock lets you watch exactly one Short, Sample or Reel per visit, then refuses to page to the next one until you leave — in YouTube, YouTube Music, Instagram and Facebook. It also hard-blocks Shorts and Reels URLs inside Chromium-based browsers and the 1DM / 1DM+ built-in browser with a plain, theme-aware blocked page.
 
 No launcher icon, no settings screen, no toggles: blocking is always on and the module only appears in your Xposed manager.
