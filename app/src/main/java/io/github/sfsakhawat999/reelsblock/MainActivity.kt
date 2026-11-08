@@ -82,9 +82,9 @@ class MainActivity : Activity() {
         content.addView(
             card {
                 addView(sectionTitle("SUPPORTED APPS"))
-                addView(appRow("YouTube Shorts", "Tested with YouTube 21.42.243"))
+                addView(appRow("YouTube Shorts", "Tested with YouTube 21.42.243 · Morphe builds too"))
                 addView(divider())
-                addView(appRow("YouTube Music Samples", "Tested with YouTube Music 9.41.53"))
+                addView(appRow("YouTube Music Samples", "Tested with YouTube Music 9.41.53 · Morphe builds too"))
                 addView(divider())
                 addView(appRow("Instagram Reels", "Tested with Instagram 453.0.0.57.79"))
                 addView(divider())

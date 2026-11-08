@@ -36,6 +36,9 @@ import java.util.LinkedHashSet
  *      com.google.android.libraries.youtube.reel.internal.pager.ReelRecyclerView
  *      (id "reel_recycler", child of androidx.swiperefreshlayout.SwipeRefreshLayout
  *       "reel_watch_refresher", inside Shell$HomeActivity / MusicActivity).
+ *    Morphe-patched builds (app.morphe.android.youtube and
+ *      app.morphe.android.apps.youtube.music) ship the identical pager and class
+ *      names, so they use the same hooks.
  *
  *  Instagram (single-activity app; everything obfuscated EXCEPT androidx):
  *    Reels player =
@@ -154,6 +157,18 @@ internal object Engine {
 
     const val YOUTUBE_PACKAGE = "com.google.android.youtube"
     const val YOUTUBE_MUSIC_PACKAGE = "com.google.android.apps.youtube.music"
+
+    /**
+     * Morphe-patched builds. The patch changes only the package name and
+     * launcher label; the reel pager and everything around it keep the
+     * stock YouTube class names, so the same hooks apply unchanged.
+     */
+    const val MORPHE_YOUTUBE_PACKAGE = "app.morphe.android.youtube"
+    const val MORPHE_YOUTUBE_MUSIC_PACKAGE = "app.morphe.android.apps.youtube.music"
+
+    val YOUTUBE_PACKAGES = setOf(YOUTUBE_PACKAGE, MORPHE_YOUTUBE_PACKAGE)
+    val YOUTUBE_MUSIC_PACKAGES = setOf(YOUTUBE_MUSIC_PACKAGE, MORPHE_YOUTUBE_MUSIC_PACKAGE)
+
     const val INSTAGRAM_PACKAGE = "com.instagram.android"
     const val FACEBOOK_PACKAGE = "com.facebook.katana"
 
@@ -227,9 +242,9 @@ internal object Engine {
     )
 
     fun targetFor(packageName: String): Target? = when (packageName) {
-        YOUTUBE_PACKAGE -> Target(TargetType.YOUTUBE, packageName,
+        in YOUTUBE_PACKAGES -> Target(TargetType.YOUTUBE, packageName,
             "That's your Short for now. Press back to leave.")
-        YOUTUBE_MUSIC_PACKAGE -> Target(TargetType.YOUTUBE_MUSIC, packageName,
+        in YOUTUBE_MUSIC_PACKAGES -> Target(TargetType.YOUTUBE_MUSIC, packageName,
             "That's your Sample for now. Press back to leave.")
         INSTAGRAM_PACKAGE -> Target(TargetType.INSTAGRAM, packageName,
             "That's your Reel for now. Press back to leave.")

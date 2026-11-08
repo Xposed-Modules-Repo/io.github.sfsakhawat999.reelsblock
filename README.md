@@ -21,8 +21,11 @@ ReelsBlock only affects the short-video player.
 ## Features
 
 - **YouTube Shorts** — Shorts play normally; swiping up for the next Short does
-  nothing until you leave the player.
-- **YouTube Music Samples** — the same for the Samples tab.
+  nothing until you leave the player. Works with the stock app and with
+  [Morphe](https://github.com/MorpheApp)-patched builds
+  (`app.morphe.android.youtube`), which keep the same hooks and class names.
+- **YouTube Music Samples** — the same for the Samples tab, including
+  Morphe-patched builds (`app.morphe.android.apps.youtube.music`).
 - **Instagram Reels** — the same for the Reels player.
 - **Facebook Reels** — the same for the Reels tab and for reels/videos opened
   from the feed. Facebook renames its internal classes every build, so the module
@@ -42,7 +45,9 @@ ReelsBlock only affects the short-video player.
   Blocking and the toast are always on. The module appears only in your
   Xposed manager.
 - **Fixed scope** — declares `com.google.android.youtube`,
-  `com.google.android.apps.youtube.music`, `com.instagram.android`,
+  `com.google.android.apps.youtube.music`, the Morphe-patched
+  `app.morphe.android.youtube` / `app.morphe.android.apps.youtube.music`,
+  `com.instagram.android`,
   `com.facebook.katana`, the Chromium browser packages (Chrome
   stable/beta/dev/canary, Brave, Edge, Vivaldi, Kiwi, Ecosia, Chromium,
   Cromite, Bromite), `idm.internet.download.manager` /
@@ -58,8 +63,8 @@ ReelsBlock only affects the short-video player.
   Tested with the **Vector** manager **2.2** (chsbuffer's LSPosed fork).
 - **Android 16** (tested on OPPO, build `A059P`), minSdk 27.
 - Target apps (tested versions):
-  - YouTube **21.42.243**
-  - YouTube Music **9.41.53** (Samples tab)
+  - YouTube **21.42.243** and Morphe builds of the same base
+  - YouTube Music **9.41.53** and Morphe builds (Samples tab)
   - Instagram **453.0.0.57.79**
   - Facebook **538.0.0.53.70**, **585.0.0.47.54**, **587.0.0.0.29**
     (Reels tab and feed-opened reels)
@@ -73,7 +78,7 @@ ReelsBlock is a *modern* libxposed module (no legacy `de.robv` classes are bundl
 | File | Purpose |
 |---|---|
 | `app/src/main/resources/META-INF/xposed/module.prop` | `minApiVersion=101`, `targetApiVersion=101`, `staticScope=true` |
-| `app/src/main/resources/META-INF/xposed/scope.list` | the four apps, the Chromium browsers, 1DM / 1DM+ and Firefox |
+| `app/src/main/resources/META-INF/xposed/scope.list` | the four app families (stock + Morphe YouTube / YouTube Music), the Chromium browsers, 1DM / 1DM+ and Firefox |
 | `app/src/main/resources/META-INF/xposed/java_init.list` | Entry class `io.github.sfsakhawat999.reelsblock.xposed.ReelsBlockHook` |
 
 ### Session model
@@ -92,6 +97,10 @@ androidx class names + resource ids**, never on app-specific obfuscated names:
 - Pager: `com.google.android.libraries.youtube.reel.internal.pager.ReelRecyclerView`
   (id `reel_recycler`); YouTube Music's Samples tab uses the same class and
   structure as Shorts, so one hook covers both
+- Morphe-patched builds (`app.morphe.android.youtube`,
+  `app.morphe.android.apps.youtube.music`) change only the package name and label;
+  the pager and every hooked class keep the stock names, so the identical hooks
+  are applied to them
 - Gates: `onInterceptTouchEvent`, `onTouchEvent` (the primary gate); `fling`,
   `scrollToPosition`, `smoothScrollToPosition` where the build exposes them
   (YouTube Music 9.41.53 does not, but the touch gates still stop swipes)
@@ -219,6 +228,9 @@ classes the hook needs and are not supported. Full details and limitations:
 - **YouTube Music Samples:** verified on 9.41.53. The Samples tab uses the same
   player component as YouTube Shorts; if YouTube Music switches to a different
   player, a re-probe is needed.
+- **Morphe-patched YouTube / YouTube Music:** supported because the patch keeps
+  the stock hooks and class names. Patched builds track their own base version,
+  so an anchor that breaks on a stock update breaks on the patched build too.
 - **Browsers (Chromium + 1DM + Firefox):** a hard URL block, not the in-app
   swipe block — a web page has no in-app player to block. Only reel URLs are
   caught; reels opened as SPA modals while the URL stays on the feed are not.
