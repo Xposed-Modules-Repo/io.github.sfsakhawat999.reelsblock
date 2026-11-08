@@ -1,11 +1,11 @@
-# Browser support (Chromium + 1DM, built in)
+# Browser support (Chromium + 1DM + Firefox, built in)
 
-ReelsBlock covers Chromium-based browsers — Chrome, Brave, Edge, Vivaldi,
-Kiwi, Ecosia, Chromium, Cromite, Bromite — and the **1DM / 1DM+** built-in
-browser (Lightning WebView engine) **without any companion module or
-userscript host**. The Xposed module itself hooks the browser's Java layer
-from inside its process and blocks reel URLs; Chromium and the 1DM WebView
-need different anchors, described below.
+ReelsBlock covers Chromium-based browsers (Chrome, Brave, Edge, Vivaldi,
+Kiwi, Ecosia, Chromium, Cromite, Bromite), the **1DM / 1DM+** built-in
+browser (Lightning WebView engine) and **Firefox for Android** (GeckoView)
+**without any companion module or userscript host**. The Xposed module itself
+hooks the browser's Java layer from inside its process and blocks reel URLs;
+each engine exposes a different anchor, described below.
 
 ## Engines
 
@@ -15,6 +15,9 @@ need different anchors, described below.
 - **1DM / 1DM+** (`idm.internet.download.manager` and
   `idm.internet.download.manager.plus`) — both bundle Lightning Browser;
   the module hooks its `acr.browser.lightning.view.LightningWebClient`.
+- **Firefox** (`org.mozilla.firefox`, `org.mozilla.firefox_beta`,
+  `org.mozilla.fenix`) — GeckoView, hooked through the public
+  `GeckoSession` delegate SDK rather than any Fenix class name.
 
 ## What is blocked
 
@@ -25,10 +28,11 @@ need different anchors, described below.
 | `facebook.com/reel…`, `/reels…` (any subdomain) | Blocked page |
 
 Hard block for all three sites — a Short in the browser is treated exactly
-like a reel. The page starts loading and is then replaced by the blocked page
-— bytes move for a moment before the block wins; network-level URL blocking
-without a MITM VPN is not possible on Android. Chromium is navigated to a
-self-contained `data:` page; 1DM keeps the URL and paints a full-screen
+like a reel. On Chromium the page starts loading and is then replaced by the
+blocked page; on Firefox the load is refused before the reel document commits.
+Bytes may move for a moment before the block wins; network-level URL blocking
+without a MITM VPN is not possible on Android. Chromium and Firefox are sent
+to a self-contained `data:` page; 1DM keeps the URL and paints a full-screen
 overlay, so its address bar and back history stay intact.
 
 ## How it works
@@ -94,21 +98,49 @@ tab layer to hook. The stable anchor is
    and goes back through normal history, or opens the site root when there is
    no previous entry.
 
+### Firefox
+
+Firefox is not a Chromium fork and not a WebView shell: Fenix renders with
+GeckoView, whose **public Java SDK** is the hook surface. No Fenix class name
+or resource id is involved:
+
+1. Fenix installs its listeners with
+   `GeckoSession.setNavigationDelegate(NavigationDelegate)` and
+   `GeckoSession.setProgressDelegate(ProgressDelegate)`. The module hooks both
+   setters and wraps the incoming listener in a `java.lang.reflect.Proxy`,
+   forwarding every callback to Fenix's real listener.
+2. A main-frame load or redirect for a reel URL is **denied before the
+   document commits** (`onLoadRequest` → `GeckoResult.deny()`). History-API
+   (SPA) URL changes — opening a Short from the YouTube home page, for
+   example — are caught on `onLocationChange`, with `onPageStart` as a
+   backstop.
+3. The blocked page is then loaded through `GeckoSession.Loader` with
+   `REPLACE_HISTORY`, so the browser's own Back button skips the blocked reel,
+   and with `BYPASS_LOAD_URI_DELEGATE`, so Fenix's URL policy cannot refuse
+   the `data:` document. The page follows the browser theme (`prefers-color-scheme`)
+   and its Back button falls back to the site root on a direct visit that has
+   no history.
+4. The address bar shows the `data:` URL of the blocked page (Firefox has no
+   API to load HTML under another URL); the page itself is the readable
+   "Shorts / Reels are blocked here" screen.
+
 ## Tested
 
 Android 16 (arm64), YouTube Shorts URL. **Blocked:** Chrome 156, Chrome
 Canary, Brave, Edge, Vivaldi, Kiwi, Ecosia, Cromite 153, ChromiumBrowser 151,
-Bromite 108, and 1DM+ 20.0. Instagram Reel URLs were verified in 1DM+ too.
+Bromite 108, 1DM+ 20.0, and Firefox 159.0.1. Instagram and Facebook Reel URLs
+were verified in Firefox as well; the YouTube home → Shorts feed SPA
+navigation and the blocked page's Back button were verified there too.
 Opera, Samsung Internet, Yandex and Aloha rename or hide the tab delegate
 class, so they are **not supported** and were removed from the scope. Not
-tested: Chrome Beta/Dev and Opera GX (not installable here) and
-`org.chromium.chrome` (AOSP build, not installed).
+tested: Chrome Beta/Dev, Opera GX, Firefox Beta/Nightly and Firefox Focus
+(not installable here) and `org.chromium.chrome` (AOSP build, not installed).
 
 ## Enable
 
 1. In your Xposed manager (Vector), give ReelsBlock scope for your browser —
-   every Chromium browser listed above and both 1DM packages are in the fixed
-   scope.
+   every Chromium browser listed above, both 1DM packages and the Firefox
+   channels are in the fixed scope.
 2. Force-stop the browser (or reboot).
 
 Nothing else to install or configure; there is no toggle by design.
@@ -121,8 +153,15 @@ tick is what actually enables injection.
 
 ## Limitations
 
-- Supported engines only: Chromium and Lightning (1DM / 1DM+). Firefox and
-  other WebView browsers (DuckDuckGo, Firefox Focus) are not in scope.
+- Supported engines only: Chromium, Lightning (1DM / 1DM+) and GeckoView
+  (Firefox). Other WebView browsers (DuckDuckGo, Firefox Focus) are not in
+  scope.
+- Firefox: the blocked page is a `data:` URL, so the address bar shows that
+  URL while the blocked page is open. Reels played inside a feed without a URL
+  change (for example an inline player on the YouTube home page) are not
+  caught — the block keys on the URL. A Firefox update may rename the
+  GeckoView SDK methods; the module then logs `version drift` and leaves URLs
+  alone.
 - Chromium forks may rename or strip the engine classes; the module then logs
   `version drift` and leaves URLs alone instead of blocking.
 - 1DM blocking uses `evaluateJavascript`, so it needs JavaScript enabled in

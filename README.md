@@ -28,12 +28,12 @@ ReelsBlock only affects the short-video player.
   from the feed. Facebook renames its internal classes every build, so the module
   finds the player by its layout instead of a name; see
   [docs/facebook-reels.md](docs/facebook-reels.md).
-- **Browsers (Chromium + 1DM)** — Shorts/Reel URLs are blocked inside
-  Chromium-based browsers (Chrome, Brave, Edge, Vivaldi, Kiwi, Ecosia,
-  Cromite, …) and inside the **1DM / 1DM+** built-in browser (Lightning
-  WebView engine): the module overwrites the page with a plain blocked page —
-  YouTube Shorts included, no redirect.
-  Details: [docs/browser.md](docs/browser.md).
+- **Browsers (Chromium + 1DM + Firefox)** — Shorts/Reel URLs are blocked
+  inside Chromium-based browsers (Chrome, Brave, Edge, Vivaldi, Kiwi, Ecosia,
+  Cromite, …), inside the **1DM / 1DM+** built-in browser (Lightning WebView
+  engine) and inside **Firefox for Android** (GeckoView): the module stops
+  the page and shows a plain blocked page — YouTube Shorts included, no
+  redirect. Details: [docs/browser.md](docs/browser.md).
 - **Taps still work** — like, comment, pause, and share keep functioning; only
   swiping to the next video is blocked.
 - **One gentle toast per visit** — "That's your Short, Sample or Reel for now.
@@ -45,10 +45,11 @@ ReelsBlock only affects the short-video player.
   `com.google.android.apps.youtube.music`, `com.instagram.android`,
   `com.facebook.katana`, the Chromium browser packages (Chrome
   stable/beta/dev/canary, Brave, Edge, Vivaldi, Kiwi, Ecosia, Chromium,
-  Cromite, Bromite) and `idm.internet.download.manager` /
-  `idm.internet.download.manager.plus` as a static scope, so managers list
-  them automatically ("Fixed by the module" in Vector). No manual scope
-  selection.
+  Cromite, Bromite), `idm.internet.download.manager` /
+  `idm.internet.download.manager.plus` and the Firefox channels
+  (`org.mozilla.firefox`, `org.mozilla.firefox_beta`, `org.mozilla.fenix`)
+  as a static scope, so managers list them automatically ("Fixed by the
+  module" in Vector). No manual scope selection.
 
 ## Requirements
 
@@ -63,6 +64,7 @@ ReelsBlock only affects the short-video player.
   - Facebook **538.0.0.53.70**, **585.0.0.47.54**, **587.0.0.0.29**
     (Reels tab and feed-opened reels)
   - 1DM+ **20.0** (browser; 1DM uses the same Lightning WebView engine)
+  - Firefox **159.0.1** (browser; GeckoView engine)
 
 ## How it works
 
@@ -71,7 +73,7 @@ ReelsBlock is a *modern* libxposed module (no legacy `de.robv` classes are bundl
 | File | Purpose |
 |---|---|
 | `app/src/main/resources/META-INF/xposed/module.prop` | `minApiVersion=101`, `targetApiVersion=101`, `staticScope=true` |
-| `app/src/main/resources/META-INF/xposed/scope.list` | the four apps, the Chromium browsers and 1DM / 1DM+ |
+| `app/src/main/resources/META-INF/xposed/scope.list` | the four apps, the Chromium browsers, 1DM / 1DM+ and Firefox |
 | `app/src/main/resources/META-INF/xposed/java_init.list` | Entry class `io.github.sfsakhawat999.reelsblock.xposed.ReelsBlockHook` |
 
 ### Session model
@@ -114,6 +116,18 @@ androidx class names + resource ids**, never on app-specific obfuscated names:
 - Session ends when the pager detaches; the toast resets when another list is
   touched
 
+**Firefox** (details: [docs/browser.md](docs/browser.md))
+- Anchors: the **public GeckoView SDK**, not Fenix internals —
+  `GeckoSession.setNavigationDelegate(NavigationDelegate)` and
+  `setProgressDelegate(ProgressDelegate)`. The installed listener is wrapped in
+  a `java.lang.reflect.Proxy` that forwards every callback to Fenix.
+- Gates: `onLoadRequest` (main-frame load/redirect → `GeckoResult.deny()`
+  before the reel commits), `onLocationChange` (History-API SPA URL changes),
+  `onPageStart` (backstop)
+- Blocked page: a self-contained `data:` document loaded via
+  `GeckoSession.Loader` with `REPLACE_HISTORY` (Back skips the reel) and
+  `BYPASS_LOAD_URI_DELEGATE` (Fenix policy cannot refuse it)
+
 Blocked calls simply **do not `proceed()`** in the interceptor chain — the pager's
 own drag/paging pipeline never runs, while touch events still reach child views.
 
@@ -137,7 +151,8 @@ libxposed API artifact.
    (or build it yourself — see [Building](#building)) and install it on the rooted device.
 2. Open your Xposed manager → Modules → enable **ReelsBlock**.
 3. Scope is fixed by the module itself — YouTube, YouTube Music, Instagram,
-   Facebook, the Chromium browsers and 1DM / 1DM+ are added automatically.
+   Facebook, the Chromium browsers, 1DM / 1DM+ and Firefox are added
+   automatically.
 4. Force-stop YouTube, YouTube Music, Instagram, Facebook and the browser (or
    reboot) so the hook is injected into a fresh process.
 
@@ -149,6 +164,9 @@ Built in — no extra module. The fixed scope includes:
   Vivaldi, Kiwi, Ecosia, Chromium, Cromite and Bromite.
 - **1DM and 1DM+:** the download manager's built-in browser, which uses the
   Lightning WebView engine.
+- **Firefox for Android:** release, Beta and Nightly (`org.mozilla.firefox`,
+  `org.mozilla.firefox_beta`, `org.mozilla.fenix`), which render with
+  GeckoView.
 
 Enable ReelsBlock for your browser in your Xposed manager (already listed) and
 force-stop it. In the browser, Shorts/Reel URLs — `youtube.com/shorts/…`
@@ -163,7 +181,10 @@ The Chromium path hooks the tab URL callback (mechanism adapted from
 verified on Chrome, Chrome Canary, Brave, Edge, Vivaldi, Kiwi, Ecosia, Cromite,
 ChromiumBrowser and Bromite. The 1DM path hooks Lightning's `WebViewClient` and
 paints the blocked page into the current document; verified on 1DM+ 20.0.
-Heavy Chromium forks (Opera, Samsung Internet, Yandex, Aloha) rename the engine
+The Firefox path hooks the public `GeckoSession` delegate setters, denies the
+reel load before it commits and loads the blocked page in its place; verified
+on Firefox 159.0.1, including a YouTube home → Shorts SPA navigation. Heavy
+Chromium forks (Opera, Samsung Internet, Yandex, Aloha) rename the engine
 classes the hook needs and are not supported. Full details and limitations:
 [docs/browser.md](docs/browser.md).
 
@@ -198,12 +219,15 @@ classes the hook needs and are not supported. Full details and limitations:
 - **YouTube Music Samples:** verified on 9.41.53. The Samples tab uses the same
   player component as YouTube Shorts; if YouTube Music switches to a different
   player, a re-probe is needed.
-- **Browsers (Chromium + 1DM):** a hard URL block, not the in-app swipe block —
-  a web page has no in-app player to block. Only reel URLs are caught; reels
-  opened as SPA modals while the URL stays on the feed are not. Browser updates
-  may break the anchors until the module is updated; forks that strip or rename
-  the engine classes log `(version drift)` and simply leave URLs alone. The 1DM
-  overlay relies on JavaScript being enabled in its browser. See
+- **Browsers (Chromium + 1DM + Firefox):** a hard URL block, not the in-app
+  swipe block — a web page has no in-app player to block. Only reel URLs are
+  caught; reels opened as SPA modals while the URL stays on the feed are not.
+  Browser updates may break the anchors until the module is updated; forks that
+  strip or rename the engine classes log `(version drift)` and simply leave
+  URLs alone. The 1DM overlay relies on JavaScript being enabled in its
+  browser. In Firefox the blocked page is a `data:` URL, so the address bar
+  shows that URL while it is open; the Firefox/GeckoView support is verified on
+  the release channel (159.0.1), and Beta/Nightly use the same code path. See
   [docs/browser.md](docs/browser.md).
 - Only swiping inside the short-video player is blocked — by design. Scrolling
   everywhere else stays untouched.

@@ -103,6 +103,13 @@ class MainActivity : Activity() {
                         "Lightning WebView engine (1DM+ 20.0)",
                     ),
                 )
+                addView(divider())
+                addView(
+                    appRow(
+                        "Firefox",
+                        "GeckoView engine (Firefox 159.0.1)",
+                    ),
+                )
             },
         )
 

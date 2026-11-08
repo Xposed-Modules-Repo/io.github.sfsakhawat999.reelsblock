@@ -14,9 +14,12 @@ import io.github.libxposed.api.XposedModule
 import io.github.libxposed.api.XposedModuleInterface
 import java.lang.ref.WeakReference
 import java.lang.reflect.Constructor
+import java.lang.reflect.Field
+import java.lang.reflect.InvocationHandler
 import java.lang.reflect.Method
 import java.lang.reflect.Executable
 import java.lang.reflect.Modifier
+import java.lang.reflect.Proxy
 import java.util.LinkedHashSet
 
 /**
@@ -69,6 +72,15 @@ import java.util.LinkedHashSet
  *    painted into the current document (CSP/Trusted-Types safe), and a
  *    2 s getUrl() poller catches History-API changes.
  *
+ *  Firefox (org.mozilla.firefox / _beta / fenix) — GeckoView engine:
+ *    Fenix installs its navigation/progress listeners through the public
+ *    GeckoView SDK (GeckoSession.setNavigationDelegate /
+ *    setProgressDelegate). The module wraps those listeners in proxies, so
+ *    every main-frame load (+ redirect) is denied before the reel document
+ *    commits, History-API (SPA) URL changes are caught on
+ *    onLocationChange, and a self-contained blocked page is loaded in its
+ *    place. No Gecko internals or Fenix class names are relied on.
+ *
  * Enforcement (interceptor style — blocked = do not chain.proceed()):
  *   - Session = player attached → armed; detached → disarmed.
  *   - While armed, for the tracked pager (and its inner RecyclerView):
@@ -89,6 +101,31 @@ class ReelsBlockHook : XposedModule() {
             classLoader = param.classLoader,
             target = target,
         )
+    }
+}
+
+/** Sentinel: the wrapped Firefox delegate call is not ours, forward it. */
+private val GECKO_FORWARD = Any()
+
+/**
+ * Forwards a wrapped GeckoView delegate call to Firefox's real listener
+ * unless the module handled it (a blocked reel URL).
+ */
+private class GeckoDelegateHandler(
+    private val delegate: Any,
+) : InvocationHandler {
+    override fun invoke(proxy: Any?, method: Method, args: Array<out Any?>?): Any? {
+        return try {
+            val decision = Engine.geckoDelegateCall(method.name, args)
+            if (decision !== GECKO_FORWARD) {
+                decision
+            } else {
+                method.invoke(delegate, *(args ?: emptyArray<Any?>()))
+            }
+        } catch (t: Throwable) {
+            Engine.log("ReelsBlock: Firefox delegate forward failed: $t")
+            null
+        }
     }
 }
 
@@ -125,6 +162,15 @@ internal object Engine {
     const val IDM_PLUS_PACKAGE = "idm.internet.download.manager.plus"
 
     /**
+     * Firefox for Android (all release channels). Fenix is not a Chromium
+     * fork and not a WebView shell: it renders through GeckoView, whose
+     * public Java SDK (GeckoSession delegates) is the hook surface.
+     */
+    const val FIREFOX_PACKAGE = "org.mozilla.firefox"
+    const val FIREFOX_BETA_PACKAGE = "org.mozilla.firefox_beta"
+    const val FIREFOX_NIGHTLY_PACKAGE = "org.mozilla.fenix"
+
+    /**
      * Chromium-based browsers that keep the engine Java layer the browser
      * hooks target. Heavily modified forks (Opera, Samsung Internet, Yandex,
      * Aloha) rename or hide it, so they are not in scope. Anything else
@@ -155,9 +201,24 @@ internal object Engine {
      */
     val WEBVIEW_BROWSER_PACKAGES = setOf(IDM_PACKAGE, IDM_PLUS_PACKAGE)
 
+    /** Firefox channels — GeckoView engine, hooked through the GeckoSession SDK. */
+    val FIREFOX_PACKAGES = setOf(
+        FIREFOX_PACKAGE,
+        FIREFOX_BETA_PACKAGE,
+        FIREFOX_NIGHTLY_PACKAGE,
+    )
+
     // -------- target model --------
 
-    enum class TargetType { YOUTUBE, YOUTUBE_MUSIC, INSTAGRAM, FACEBOOK, BROWSER, WEBVIEW_BROWSER }
+    enum class TargetType {
+        YOUTUBE,
+        YOUTUBE_MUSIC,
+        INSTAGRAM,
+        FACEBOOK,
+        BROWSER,
+        WEBVIEW_BROWSER,
+        FIREFOX,
+    }
 
     class Target(
         val type: TargetType,
@@ -177,6 +238,7 @@ internal object Engine {
         // The blocked page itself is the feedback; no toast for the browser.
         in CHROMIUM_PACKAGES -> Target(TargetType.BROWSER, packageName, "")
         in WEBVIEW_BROWSER_PACKAGES -> Target(TargetType.WEBVIEW_BROWSER, packageName, "")
+        in FIREFOX_PACKAGES -> Target(TargetType.FIREFOX, packageName, "")
         else -> null
     }
 
@@ -278,6 +340,9 @@ internal object Engine {
             TargetType.WEBVIEW_BROWSER ->
                 runCatching { installWebViewBrowserHooks(classLoader, target) }
                     .onFailure { log("ReelsBlock: WebView browser hooks failed: $it") }
+            TargetType.FIREFOX ->
+                runCatching { installFirefoxHooks(classLoader, target) }
+                    .onFailure { log("ReelsBlock: Firefox hooks failed: $it") }
         }
     }
 
@@ -1122,8 +1187,16 @@ internal object Engine {
         return field.get(arg) as? String
     }
 
-    /** HTML for the blocked page that replaces a shorts/reel URL. */
-    private fun browserBlockPageFor(url: String, backSteps: Int): String {
+    /**
+     * HTML for the blocked page that replaces a shorts/reel URL.
+     * When [fallbackRoot] is set, Back opens that page instead of doing
+     * nothing on a visit that has no history (a direct URL open).
+     */
+    private fun browserBlockPageFor(
+        url: String,
+        backSteps: Int,
+        fallbackRoot: String? = null,
+    ): String {
         val isShorts = BROWSER_SHORTS_RE.containsMatchIn(url)
         var host = ""
         try {
@@ -1131,6 +1204,13 @@ internal object Engine {
         } catch (_: Exception) {}
         val title = if (isShorts) "Shorts are blocked here" else "Reels are blocked here"
         val sub = if (host.isNotEmpty()) "ReelsBlock \u00b7 $host" else "ReelsBlock"
+        // Single-quoted host is safe: it comes from a parsed URL, not the page.
+        val backAction = if (fallbackRoot != null) {
+            "if(history.length>1){history.go(-$backSteps)}" +
+                "else{location.href='$fallbackRoot'}"
+        } else {
+            "history.go(-$backSteps)"
+        }
         return (
             "<!DOCTYPE html><html><head><meta charset=\"utf-8\">" +
                 "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
@@ -1152,7 +1232,7 @@ internal object Engine {
                 "</style></head><body><div class=\"rb-overlay\">" +
                 "<div class=\"rb-title\">$title</div>" +
                 "<div class=\"rb-sub\">$sub</div>" +
-                "<button class=\"rb-back\" onclick=\"history.go(-$backSteps)\">Back</button>" +
+                "<button class=\"rb-back\" onclick=\"$backAction\">Back</button>" +
                 "</div></body></html>"
             )
     }
@@ -1340,6 +1420,233 @@ internal object Engine {
               (document.documentElement||document.body).appendChild(o);
             })();
         """.trimIndent()
+    }
+
+    // =====================================================================
+    // Firefox — GeckoView (Fenix)
+    //
+    // Firefox is neither Chromium (no tab delegate / TabImpl) nor a WebView
+    // shell (no android.webkit.WebViewClient): Fenix renders with GeckoView
+    // and installs its listeners through the public GeckoView SDK —
+    // GeckoSession.setNavigationDelegate(NavigationDelegate) and
+    // setProgressDelegate(ProgressDelegate). Both setters are hooked and the
+    // incoming listener is wrapped in a java.lang.reflect.Proxy, which gives
+    // us every main-frame load (onLoadRequest), redirect, History-API SPA URL
+    // change (onLocationChange) and committed page start (onPageStart) without
+    // relying on any Fenix class name.
+    //
+    // A blocked load is DENIED before the reel document commits, then a
+    // self-contained data: page is loaded with REPLACE_HISTORY so Back skips
+    // the reel, and with BYPASS_LOAD_URI_DELEGATE so Fenix's own URL policy
+    // cannot refuse the data: document.
+    // =====================================================================
+
+    private const val GECKO_SESSION_CLASS = "org.mozilla.geckoview.GeckoSession"
+    private const val GECKO_LOADER_CLASS = "org.mozilla.geckoview.GeckoSession\$Loader"
+    private const val GECKO_RESULT_CLASS = "org.mozilla.geckoview.GeckoResult"
+    private const val GECKO_NAV_DELEGATE_CLASS =
+        "org.mozilla.geckoview.GeckoSession\$NavigationDelegate"
+    private const val GECKO_PROGRESS_DELEGATE_CLASS =
+        "org.mozilla.geckoview.GeckoSession\$ProgressDelegate"
+    private const val GECKO_REQUEST_CLASS =
+        "org.mozilla.geckoview.GeckoSession\$NavigationDelegate\$LoadRequest"
+
+    /** GeckoSession.Loader flags (GeckoView public SDK constants). */
+    private const val GECKO_LOAD_FLAGS_REPLACE_HISTORY = 64
+    private const val GECKO_LOAD_FLAGS_BYPASS_LOAD_URI_DELEGATE = 128
+
+    @Volatile private var geckoLoaderCtor: Constructor<*>? = null
+    @Volatile private var geckoLoaderData: Method? = null
+    @Volatile private var geckoLoaderFlags: Method? = null
+    @Volatile private var geckoSessionLoad: Method? = null
+    @Volatile private var geckoDeny: Method? = null
+    @Volatile private var geckoRequestUri: Field? = null
+    @Volatile private var firefoxHooked = false
+
+    private val geckoLastInjectMs = HashMap<Int, Long>()
+    private val geckoLastInjectUrl = HashMap<Int, String?>()
+
+    private fun installFirefoxHooks(classLoader: ClassLoader, target: Target) {
+        val sessionClass = runCatching {
+            Class.forName(GECKO_SESSION_CLASS, false, classLoader)
+        }.onFailure {
+            log("ReelsBlock: GeckoSession not found (version drift): ${it.message}")
+        }.getOrNull() ?: return
+
+        val navDelegate = runCatching {
+            Class.forName(GECKO_NAV_DELEGATE_CLASS, false, classLoader)
+        }.onFailure {
+            log("ReelsBlock: GeckoView NavigationDelegate missing (version drift): ${it.message}")
+        }.getOrNull() ?: return
+        val progressDelegate = runCatching {
+            Class.forName(GECKO_PROGRESS_DELEGATE_CLASS, false, classLoader)
+        }.getOrNull()
+
+        resolveGeckoAnchors(sessionClass, classLoader)
+
+        if (firefoxHooked) return
+
+        // Every main-frame load, redirect and SPA URL change flows through
+        // the navigation delegate Fenix installs here.
+        val setNav = findDeclaredUpward(sessionClass, "setNavigationDelegate", 1)
+        if (setNav != null) {
+            hookMethod(setNav, GateInterceptor { chain ->
+                val delegate = chain.getArg(0)
+                if (delegate == null || isGeckoProxy(delegate)) {
+                    chain.proceed()
+                } else {
+                    chain.proceed(arrayOf<Any?>(wrapGeckoDelegate(delegate, navDelegate)))
+                }
+            })
+        } else {
+            log("ReelsBlock: GeckoSession.setNavigationDelegate not found (version drift)")
+        }
+
+        // Backstop for paths that commit without a navigation decision.
+        if (progressDelegate != null) {
+            val setProgress = findDeclaredUpward(sessionClass, "setProgressDelegate", 1)
+            if (setProgress != null) {
+                hookMethod(setProgress, GateInterceptor { chain ->
+                    val delegate = chain.getArg(0)
+                    if (delegate == null || isGeckoProxy(delegate)) {
+                        chain.proceed()
+                    } else {
+                        chain.proceed(
+                            arrayOf<Any?>(wrapGeckoDelegate(delegate, progressDelegate)),
+                        )
+                    }
+                })
+            }
+        }
+
+        firefoxHooked = true
+        log("ReelsBlock: Firefox reel URLs are being blocked")
+    }
+
+    /** Resolves the reflection anchors once per process. */
+    private fun resolveGeckoAnchors(sessionClass: Class<*>, classLoader: ClassLoader) {
+        runCatching {
+            val loaderClass = Class.forName(GECKO_LOADER_CLASS, false, classLoader)
+            geckoLoaderCtor = loaderClass.getDeclaredConstructor()
+            // The byte overload base64-encodes the payload: the text overload
+            // emits the raw HTML, and the first '#' of the CSS in the page is
+            // then parsed as the data: URL fragment (the document truncates).
+            geckoLoaderData = loaderClass.getMethod(
+                "data", ByteArray::class.java, String::class.java,
+            )
+            geckoLoaderFlags = loaderClass.getMethod("flags", Int::class.javaPrimitiveType)
+            geckoSessionLoad = sessionClass.getMethod("load", loaderClass)
+        }.onFailure { log("ReelsBlock: GeckoView loader anchors missing (version drift): $it") }
+
+        runCatching {
+            val resultClass = Class.forName(GECKO_RESULT_CLASS, false, classLoader)
+            geckoDeny = resultClass.declaredMethods.firstOrNull {
+                it.name == "deny" && it.parameterCount == 0 &&
+                    Modifier.isStatic(it.modifiers)
+            }
+        }.onFailure { log("ReelsBlock: GeckoResult.deny missing (version drift): $it") }
+        if (geckoDeny == null) {
+            log("ReelsBlock: GeckoResult.deny missing (version drift)")
+        }
+
+        runCatching {
+            val requestClass = Class.forName(GECKO_REQUEST_CLASS, false, classLoader)
+            geckoRequestUri = requestClass.getField("uri")
+        }.onFailure { log("ReelsBlock: GeckoView LoadRequest.uri missing (version drift): $it") }
+    }
+
+    /** True when [delegate] is already one of our wrappers. */
+    private fun isGeckoProxy(delegate: Any): Boolean =
+        Proxy.isProxyClass(delegate.javaClass) &&
+            Proxy.getInvocationHandler(delegate) is GeckoDelegateHandler
+
+    private fun wrapGeckoDelegate(delegate: Any, iface: Class<*>): Any {
+        return Proxy.newProxyInstance(
+            iface.classLoader,
+            arrayOf(iface),
+            GeckoDelegateHandler(delegate),
+        )
+    }
+
+    /**
+     * Routes a wrapped GeckoView delegate call through the block check.
+     * Returns [GECKO_FORWARD] when the call must reach Firefox's own listener.
+     */
+    fun geckoDelegateCall(methodName: String, args: Array<out Any?>?): Any? {
+        val session = args?.getOrNull(0) ?: return GECKO_FORWARD
+        when (methodName) {
+            "onLoadRequest" -> {
+                val url = geckoRequestUrl(args.getOrNull(1))
+                if (url != null && browserUrlBlocked(url)) {
+                    geckoShowBlockedPage(session, url)
+                    return geckoDeny?.let { runCatching { it.invoke(null) }.getOrNull() }
+                        ?: GECKO_FORWARD
+                }
+            }
+            "onLocationChange", "onPageStart" -> {
+                val url = args.getOrNull(1) as? String
+                if (!url.isNullOrEmpty() && browserUrlBlocked(url)) {
+                    geckoShowBlockedPage(session, url)
+                    // Swallow the reel URL update; the next location event is
+                    // the blocked page queued on the main thread.
+                    return null
+                }
+            }
+        }
+        return GECKO_FORWARD
+    }
+
+    private fun geckoRequestUrl(request: Any?): String? {
+        if (request == null) return null
+        val field = geckoRequestUri ?: return null
+        return runCatching { field.get(request) as? String }.getOrNull()
+    }
+
+    /** Replaces a blocked reel URL with the self-contained block page. */
+    private fun geckoShowBlockedPage(session: Any, url: String) {
+        val now = SystemClock.uptimeMillis()
+        val key = System.identityHashCode(session)
+        val last = geckoLastInjectMs[key] ?: 0L
+        if (now - last < 2_500) return
+        if (geckoLastInjectUrl[key] == url && now - last < 5_000) return
+        geckoLastInjectMs[key] = now
+        geckoLastInjectUrl[key] = url
+
+        val root = runCatching {
+            java.net.URI(url).host?.removePrefix("www.")?.let { "https://$it/" }
+        }.getOrNull()
+        val html = browserBlockPageFor(url, backSteps = 1, fallbackRoot = root)
+        mainHandler.post {
+            runCatching { loadGeckoBlockPage(session, html) }
+                .onFailure { log("ReelsBlock: Firefox block failed: $it") }
+        }
+    }
+
+    /**
+     * Loads [html] through GeckoSession.Loader. REPLACE_HISTORY makes Back
+     * skip the blocked reel; BYPASS_LOAD_URI_DELEGATE keeps Firefox's own URL
+     * policy from refusing the data: document.
+     */
+    private fun loadGeckoBlockPage(session: Any, html: String) {
+        val ctor = geckoLoaderCtor
+        val data = geckoLoaderData
+        val flags = geckoLoaderFlags
+        val load = geckoSessionLoad
+        if (ctor != null && data != null && flags != null && load != null) {
+            val loader = ctor.newInstance()
+            data.invoke(loader, html.toByteArray(Charsets.UTF_8), "text/html")
+            flags.invoke(
+                loader,
+                GECKO_LOAD_FLAGS_REPLACE_HISTORY or
+                    GECKO_LOAD_FLAGS_BYPASS_LOAD_URI_DELEGATE,
+            )
+            load.invoke(session, loader)
+            return
+        }
+        // Fallback: plain data: URL navigation (no history replacement).
+        session.javaClass
+            .getMethod("loadUri", String::class.java)
+            .invoke(session, "data:text/html;charset=utf-8," + Uri.encode(html))
     }
 
     // -------- hook helpers --------

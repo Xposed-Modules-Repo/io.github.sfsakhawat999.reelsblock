@@ -17,3 +17,6 @@ org.cromite.cromite
 org.bromite.bromite
 idm.internet.download.manager
 idm.internet.download.manager.plus
+org.mozilla.firefox
+org.mozilla.firefox_beta
+org.mozilla.fenix
