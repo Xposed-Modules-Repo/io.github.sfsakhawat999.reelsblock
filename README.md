@@ -61,7 +61,8 @@ ReelsBlock only affects the short-video player.
 - Rooted Android device with **Magisk** (or KernelSU) and an LSPosed-compatible
   framework that supports the **modern libxposed API** (API version ≥ 101).
   Tested with the **Vector** manager **2.2** (chsbuffer's LSPosed fork).
-- **Android 16** (tested on OPPO, build `A059P`), minSdk 27.
+- Android 8 +
+- Confirmed to work on **Android 16** (tested on OPPO, build `A059P`), minSdk 27 , **Android 11** (tested on Redmi Note 8 pro MIUI 12.5)  .
 - Target apps (tested versions):
   - YouTube **21.42.243** and Morphe builds of the same base
   - YouTube Music **9.41.53** and Morphe builds (Samples tab)
